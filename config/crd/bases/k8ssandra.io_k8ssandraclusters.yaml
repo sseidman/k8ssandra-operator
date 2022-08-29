@@ -12171,6 +12171,19 @@ spec:
                                           value. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                                         type: object
                                     type: object
+                                  secretsProvider:
+                                    default: internal
+                                    description: SecretsProvider defines whether the
+                                      secrets used for credentials and certs will
+                                      be backed by an external secret backend. This
+                                      moves the responsibility of generating and storing
+                                      secrets from the operators to the user and will
+                                      rely on a mutating webhook to inject the secrets
+                                      into the necessary resources
+                                    enum:
+                                    - internal
+                                    - external
+                                    type: string
                                   serviceAccount:
                                     default: default
                                     description: ServiceAccount is the service account
@@ -12465,6 +12478,18 @@ spec:
                                     an implementation-defined value. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                                   type: object
                               type: object
+                            secretsProvider:
+                              default: internal
+                              description: SecretsProvider defines whether the secrets
+                                used for credentials and certs will be backed by an
+                                external secret backend. This moves the responsibility
+                                of generating and storing secrets from the operators
+                                to the user and will rely on a mutating webhook to
+                                inject the secrets into the necessary resources
+                              enum:
+                              - internal
+                              - external
+                              type: string
                             serviceAccount:
                               default: default
                               description: ServiceAccount is the service account name
@@ -18991,6 +19016,17 @@ spec:
                           to an implementation-defined value. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                         type: object
                     type: object
+                  secretsProvider:
+                    default: internal
+                    description: SecretsProvider defines whether the secrets used
+                      for credentials and certs will be backed by an external secret
+                      backend. This moves the responsibility of generating and storing
+                      secrets from the operators to the user and will rely on a mutating
+                      webhook to inject the secrets into the necessary resources
+                    enum:
+                    - internal
+                    - external
+                    type: string
                   securityContext:
                     description: SecurityContext applied to the Reaper main container.
                     properties:
@@ -19253,6 +19289,17 @@ spec:
                         type: string
                     type: object
                 type: object
+              secretsProvider:
+                default: internal
+                description: SecretsProvider defines whether the secrets used for
+                  credentials and certs will be backed by an external secret backend
+                  (e.g. vault). This moves the responsibility of generating and storing
+                  secrets from the operators to the user and will rely on a mutating
+                  webhook to inject the secrets into the necessary resources
+                enum:
+                - internal
+                - external
+                type: string
               stargate:
                 description: Stargate defines the desired deployment characteristics
                   for Stargate in this K8ssandraCluster. If this is non-nil, Stargate
@@ -20564,6 +20611,17 @@ spec:
                           to an implementation-defined value. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                         type: object
                     type: object
+                  secretsProvider:
+                    default: internal
+                    description: SecretsProvider defines whether the secrets used
+                      for credentials and certs will be backed by an external secret
+                      backend. This moves the responsibility of generating and storing
+                      secrets from the operators to the user and will rely on a mutating
+                      webhook to inject the secrets into the necessary resources
+                    enum:
+                    - internal
+                    - external
+                    type: string
                   serviceAccount:
                     default: default
                     description: ServiceAccount is the service account name to use
