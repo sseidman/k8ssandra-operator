@@ -479,7 +479,6 @@ func newReaper(namespace string) *reaperapi.Reaper {
 					Name:          "cassandra-reaper-custom",
 					PullSecretRef: &corev1.LocalObjectReference{Name: "main-secret"},
 				},
-				SecretsProvider: "external",
 			},
 			DatacenterRef: reaperapi.CassandraDatacenterRef{
 				Name: cassandraDatacenterName,
