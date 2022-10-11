@@ -140,6 +140,10 @@ type ReaperTemplate struct {
 	Telemetry *telemetryapi.TelemetrySpec `json:"telemetry,omitempty"`
 }
 
+func (in ReaperTemplate) UseExternalSecrets() bool {
+	return in.SecretsProvider != "" && in.SecretsProvider == "external"
+}
+
 // AutoScheduling includes options to configure the auto scheduling of repairs for new clusters.
 type AutoScheduling struct {
 

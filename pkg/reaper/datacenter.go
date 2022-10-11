@@ -12,8 +12,11 @@ func AddReaperSettingsToDcConfig(reaperTemplate *reaperapi.ReaperClusterTemplate
 	}
 	enableRemoteJmxAccess(dcConfig)
 	if authEnabled {
-		cassandra.AddCqlUser(reaperTemplate.CassandraUserSecretRef, dcConfig, DefaultUserSecretName(dcConfig.Cluster))
-		enableJmxAuth(reaperTemplate, dcConfig)
+		// DONE: EXTERNAL reaper, add cql to dc users and add jmx envvars
+		if !reaperTemplate.UseExternalSecrets() {
+			cassandra.AddCqlUser(reaperTemplate.CassandraUserSecretRef, dcConfig, DefaultUserSecretName(dcConfig.Cluster))
+			enableJmxAuth(reaperTemplate, dcConfig)
+		}
 	}
 }
 

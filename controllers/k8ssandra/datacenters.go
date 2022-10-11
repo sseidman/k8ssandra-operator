@@ -53,7 +53,8 @@ func (r *K8ssandraClusterReconciler) reconcileDatacenters(ctx context.Context, k
 
 	// Reconcile CassandraDatacenter objects only
 	for idx, dcTemplate := range kc.Spec.Cassandra.Datacenters {
-		if !secret.HasReplicatedSecrets(ctx, r.Client, kcKey, dcTemplate.K8sContext) {
+		// TODO: don't want for replicated secrets if disabled
+		if !secret.HasReplicatedSecrets(ctx, r.Client, kcKey, dcTemplate.K8sContext) && !kc.Spec.UseExternalSecrets() {
 			// ReplicatedSecret has not replicated yet, wait until it has
 			logger.Info("Waiting for replication to complete")
 			return result.RequeueSoon(r.DefaultDelay), actualDcs
@@ -63,6 +64,13 @@ func (r *K8ssandraClusterReconciler) reconcileDatacenters(ctx context.Context, k
 		// its fields are pointers, and without the copy we could end of with shared
 		// references that would lead to unexpected and incorrect values.
 		dcConfig := cassandra.Coalesce(cassClusterName, kc.Spec.Cassandra.DeepCopy(), dcTemplate.DeepCopy())
+
+		if kc.Spec.UseExternalSecrets() {
+			if dcConfig.Meta.Annotations == nil {
+				dcConfig.Meta.Annotations = make(map[string]string)
+			}
+			dcConfig.Meta.Annotations["cassandra.datastax.com/skip-user-creation"] = "true"
+		}
 
 		// Ensure we have a valid PodTemplateSpec before proceeding to modify it.
 		if dcConfig.PodTemplateSpec == nil {
@@ -93,7 +101,8 @@ func (r *K8ssandraClusterReconciler) reconcileDatacenters(ctx context.Context, k
 		if dcConfig.ExtraVolumes != nil {
 			cassandra.AddVolumesToPodTemplateSpec(dcConfig, *dcConfig.ExtraVolumes)
 		}
-		cassandra.ApplyAuth(dcConfig, kc.Spec.IsAuthEnabled())
+		// DONE: EXTERNAL add external secrets flag
+		cassandra.ApplyAuth(dcConfig, kc.Spec.IsAuthEnabled(), kc.Spec.UseExternalSecrets())
 
 		// This is only really required when auth is enabled, but it doesn't hurt to apply system replication on
 		// unauthenticated clusters.
@@ -103,6 +112,7 @@ func (r *K8ssandraClusterReconciler) reconcileDatacenters(ctx context.Context, k
 			// if we're not running Cassandra 3.11 and have Stargate pods, we need to allow alter RF during range movements
 			cassandra.AllowAlterRfDuringRangeMovement(dcConfig)
 		}
+		// DONE: EXTERNAL REAPER AUTH CONFIG ADD TO DC
 		if kc.Spec.Reaper != nil {
 			reaper.AddReaperSettingsToDcConfig(kc.Spec.Reaper.DeepCopy(), dcConfig, kc.Spec.IsAuthEnabled())
 		}

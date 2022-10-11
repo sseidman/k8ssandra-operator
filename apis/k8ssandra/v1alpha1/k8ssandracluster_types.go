@@ -81,6 +81,10 @@ func (in K8ssandraClusterSpec) IsAuthEnabled() bool {
 	return in.Auth == nil || *in.Auth
 }
 
+func (in K8ssandraClusterSpec) UseExternalSecrets() bool {
+	return in.SecretsProvider != "" && in.SecretsProvider == "external"
+}
+
 // K8ssandraClusterStatus defines the observed state of K8ssandraCluster
 type K8ssandraClusterStatus struct {
 	// +optional

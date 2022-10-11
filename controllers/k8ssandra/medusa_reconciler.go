@@ -52,16 +52,20 @@ func (r *K8ssandraClusterReconciler) ReconcileMedusa(
 				return result.Error(fmt.Errorf("medusa encryption certificates were not provided despite client encryption being enabled"))
 			}
 		}
+		// TODO: fix this for storage secret ref name
 		if medusaSpec.StorageProperties.StorageProvider != "local" && medusaSpec.StorageProperties.StorageSecretRef.Name == "" {
 			return result.Error(fmt.Errorf("medusa storage secret is not defined for storage provider %s", medusaSpec.StorageProperties.StorageProvider))
 		}
 		if res := r.reconcileMedusaConfigMap(ctx, remoteClient, kc, logger, namespace); res.Completed() {
 			return res
 		}
-		medusa.UpdateMedusaInitContainer(dcConfig, medusaSpec, kc.SanitizedName(), logger)
-		medusa.UpdateMedusaMainContainer(dcConfig, medusaSpec, kc.SanitizedName(), logger)
+		useExternalSecrets := kc.Spec.UseExternalSecrets()
+		medusa.UpdateMedusaInitContainer(dcConfig, medusaSpec, useExternalSecrets, kc.SanitizedName(), logger)
+		medusa.UpdateMedusaMainContainer(dcConfig, medusaSpec, useExternalSecrets, kc.SanitizedName(), logger)
 		medusa.UpdateMedusaVolumes(dcConfig, medusaSpec, kc.SanitizedName(), logger)
-		cassandra.AddCqlUser(medusaSpec.CassandraUserSecretRef, dcConfig, medusa.CassandraUserSecretName(medusaSpec, kc.SanitizedName()))
+		if !useExternalSecrets {
+			cassandra.AddCqlUser(medusaSpec.CassandraUserSecretRef, dcConfig, medusa.CassandraUserSecretName(medusaSpec, kc.SanitizedName()))
+		}
 	} else {
 		logger.Info("Medusa is not enabled")
 	}
@@ -76,7 +80,8 @@ func (r *K8ssandraClusterReconciler) reconcileMedusaSecrets(
 	logger logr.Logger,
 ) result.ReconcileResult {
 	logger.Info("Reconciling Medusa user secrets")
-	if kc.Spec.Medusa != nil {
+	// DONE: external, medusa don't create secrets
+	if kc.Spec.Medusa != nil && !kc.Spec.UseExternalSecrets() {
 		cassandraUserSecretRef := kc.Spec.Medusa.CassandraUserSecretRef
 		if cassandraUserSecretRef.Name == "" {
 			cassandraUserSecretRef.Name = medusa.CassandraUserSecretName(kc.Spec.Medusa, kc.SanitizedName())

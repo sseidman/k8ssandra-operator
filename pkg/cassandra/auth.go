@@ -14,7 +14,8 @@ import (
 const JmxInitContainer = "jmx-credentials"
 
 // ApplyAuth modifies the dc config depending on whether auth is enabled in the cluster or not.
-func ApplyAuth(dcConfig *DatacenterConfig, authEnabled bool) error {
+// TODO: CASSANDRA, need to pass in external secrets flag
+func ApplyAuth(dcConfig *DatacenterConfig, authEnabled bool, externalSecrets bool) error {
 
 	if dcConfig.PodTemplateSpec == nil {
 		return errors.New("PodTemplateSpec was nil, cannot add auth settings")
@@ -46,7 +47,7 @@ func ApplyAuth(dcConfig *DatacenterConfig, authEnabled bool) error {
 	// file in each Cassandra pod. This means that it will be possible to use the superuser credentials to authenticate
 	// any JMX client.
 	// TODO use Cassandra internals for JMX authentication, see https://github.com/k8ssandra/k8ssandra/issues/323
-	if authEnabled {
+	if authEnabled && !externalSecrets {
 		image := dcConfig.JmxInitContainerImage.ApplyDefaults(DefaultJmxInitImage)
 		dcConfig.PodTemplateSpec.Spec.ImagePullSecrets = images.CollectPullSecrets(image)
 		UpdateInitContainer(dcConfig.PodTemplateSpec, JmxInitContainer, func(c *corev1.Container) {
@@ -82,6 +83,7 @@ func ApplyAuth(dcConfig *DatacenterConfig, authEnabled bool) error {
 			}
 		})
 	}
+
 	return nil
 }
 

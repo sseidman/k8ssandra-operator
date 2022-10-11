@@ -41,6 +41,7 @@ var defaultImage = images.Image{
 	Tag:        DefaultVersion,
 }
 
+// TODO: FIND WHERE THIS IS CALLED IWTH AUTHVARS
 func NewDeployment(reaper *api.Reaper, dc *cassdcapi.CassandraDatacenter, keystorePassword *string, truststorePassword *string, authVars ...*corev1.EnvVar) *appsv1.Deployment {
 	labels := createServiceAndDeploymentLabels(reaper)
 
@@ -154,6 +155,7 @@ func NewDeployment(reaper *api.Reaper, dc *cassdcapi.CassandraDatacenter, keysto
 	volumeMounts := []corev1.VolumeMount{}
 	volumes := []corev1.Volume{}
 	// if client encryption is turned on, we need to mount the keystore and truststore volumes
+	// TODO: EXTERNAL TRUSTORE/KEYSTORE
 	if reaper.Spec.ClientEncryptionStores != nil && keystorePassword != nil && truststorePassword != nil {
 		keystoreVolume, truststoreVolume := cassandra.EncryptionVolumes(encryption.StoreTypeClient, *reaper.Spec.ClientEncryptionStores)
 		volumes = append(volumes, *keystoreVolume)
@@ -233,6 +235,7 @@ func NewDeployment(reaper *api.Reaper, dc *cassdcapi.CassandraDatacenter, keysto
 			},
 		},
 	}
+	// auth vars should be empty slice (or contain nil values, I think) if external secrets enabled)
 	addAuthEnvVars(deployment, authVars)
 	annotations.AddHashAnnotation(deployment)
 	return deployment
@@ -321,6 +324,7 @@ func computeProbe(probeTemplate *corev1.Probe) *corev1.Probe {
 	return probe
 }
 
+// TODO: EXTERNAL AUTH VARS ADDED, should get empty slice
 func addAuthEnvVars(deployment *appsv1.Deployment, vars []*corev1.EnvVar) {
 	envVars := deployment.Spec.Template.Spec.Containers[0].Env
 	for _, v := range vars {

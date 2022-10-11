@@ -104,6 +104,7 @@ func TestK8ssandraCluster(t *testing.T) {
 	t.Run("CreateMultiDcClusterWithMedusa", testEnv.ControllerTest(ctx, createMultiDcClusterWithMedusa))
 	t.Run("CreateSingleDcClusterNoAuth", testEnv.ControllerTest(ctx, createSingleDcClusterNoAuth))
 	t.Run("CreateSingleDcClusterAuth", testEnv.ControllerTest(ctx, createSingleDcClusterAuth))
+	t.Run("CreateSingleDcClusterAuthExternalSecrets", testEnv.ControllerTest(ctx, createSingleDcClusterAuthExternalSecrets))
 	// If webhooks are installed, this testcase is handled by the webhook test
 	// t.Run("ChangeNumTokensValue", testEnv.ControllerTest(ctx, changeNumTokensValue))
 	t.Run("ApplyClusterWithEncryptionOptions", testEnv.ControllerTest(ctx, applyClusterWithEncryptionOptions))
@@ -1791,6 +1792,11 @@ func verifySuperuserSecretCreated(ctx context.Context, t *testing.T, f *framewor
 	assert.Eventually(t, superuserSecretExists(f, ctx, kluster), timeout, interval, "failed to verify that the default superuser secret was created")
 }
 
+func verifySuperuserSecretNotCreated(ctx context.Context, t *testing.T, f *framework.Framework, kluster *api.K8ssandraCluster) {
+	t.Logf("check that the default superuser secret is not created")
+	assert.Never(t, superuserSecretExists(f, ctx, kluster), timeout, interval, "failed to verify that the default superuser secret was not created")
+}
+
 func superuserSecretExists(f *framework.Framework, ctx context.Context, kluster *api.K8ssandraCluster) func() bool {
 	secretName := kluster.Spec.Cassandra.SuperuserSecretRef.Name
 	if secretName == "" {
@@ -1805,7 +1811,7 @@ func verifySecretCreated(ctx context.Context, t *testing.T, f *framework.Framewo
 }
 
 func verifySecretNotCreated(ctx context.Context, t *testing.T, f *framework.Framework, namespace, secretName string) {
-	t.Logf("check that the default superuser secret is created")
+	t.Logf("check that the default superuser secret is not created")
 	assert.Never(t, secretExists(f, ctx, namespace, secretName), timeout, interval, "failed to verify that the secret %s was not created", secretName)
 }
 
@@ -1900,6 +1906,18 @@ func verifyReplicatedSecretReconciled(ctx context.Context, t *testing.T, f *fram
 	err := f.Client.Status().Update(ctx, rsec)
 
 	require.NoError(t, err, "Failed to update ReplicationSecret status")
+}
+
+func verifyReplicatedSecretNotReconciled(ctx context.Context, t *testing.T, f *framework.Framework, kc *api.K8ssandraCluster) {
+	t.Log("check ReplicatedSecret not reconciled")
+
+	rsec := &replicationapi.ReplicatedSecret{}
+	replSecretKey := types.NamespacedName{Name: kc.Name, Namespace: kc.Namespace}
+
+	assert.Never(t, func() bool {
+		err := f.Client.Get(ctx, replSecretKey, rsec)
+		return err == nil
+	}, timeout, interval, "ReplicatedSecret exists when it should not have been created")
 }
 
 func FindDatacenterCondition(status *cassdcapi.CassandraDatacenterStatus, condType cassdcapi.DatacenterConditionType) *cassdcapi.DatacenterCondition {

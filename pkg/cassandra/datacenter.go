@@ -154,11 +154,17 @@ func NewDatacenter(klusterKey types.NamespacedName, template *DatacenterConfig) 
 		return nil, DCConfigIncomplete{"template.StorageConfig"}
 	}
 
+	// // add skipsuperusercreation flag
+	// superUsername := template.SuperuserSecretRef.Name
+	// if template.Meta.Annotations != nil && template.Meta.Annotations["cassandra.datastax.com/skip-user-creation"] == "true" {
+	// 	superUsername = ""
+	// }
+
 	dc := &cassdcapi.CassandraDatacenter{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   namespace,
 			Name:        template.Meta.Name,
-			Annotations: map[string]string{},
+			Annotations: template.Meta.Annotations,
 			Labels: map[string]string{
 				api.NameLabel:                      api.NameLabelValue,
 				api.PartOfLabel:                    api.PartOfLabelValue,
@@ -178,7 +184,7 @@ func NewDatacenter(klusterKey types.NamespacedName, template *DatacenterConfig) 
 			Racks:               template.Racks,
 			StorageConfig:       *template.StorageConfig,
 			ClusterName:         template.Cluster,
-			SuperuserSecretName: template.SuperuserSecretRef.Name,
+			SuperuserSecretName: "",
 			Users:               template.Users,
 			Networking:          template.Networking,
 			PodTemplateSpec:     template.PodTemplateSpec,

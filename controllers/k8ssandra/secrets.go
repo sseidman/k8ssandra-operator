@@ -16,7 +16,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// TODO: CASS, need a workaround for this? Let it create the user then delete the secret after? Something needs to automatically change it...
 func (r *K8ssandraClusterReconciler) reconcileSuperuserSecret(ctx context.Context, kc *api.K8ssandraCluster, logger logr.Logger) result.ReconcileResult {
+	// If secrets provider is set to external, the CQL user will be created by a kubernetes job and does
+	// not need to be set in the cassdc settings
+	if kc.Spec.UseExternalSecrets() {
+		return result.Continue()
+	}
+
 	// Note that we always create a superuser secret, even when authentication is globally disabled on the cluster.
 	// This is because cass-operator would create a DC-specific superuser if we don't create a cluster-wide one here,
 	// and also because if we don't create the secret when the K8ssandraCluster is created, then it would be impossible
@@ -45,10 +52,11 @@ func (r *K8ssandraClusterReconciler) reconcileSuperuserSecret(ctx context.Contex
 	return result.Continue()
 }
 
+// DONE: EXTERNAL REAPER SECRETS
 func (r *K8ssandraClusterReconciler) reconcileReaperSecrets(ctx context.Context, kc *api.K8ssandraCluster, logger logr.Logger) result.ReconcileResult {
 	if kc.Spec.Reaper != nil {
 		// Reaper secrets are only required when authentication is enabled on the cluster
-		if kc.Spec.IsAuthEnabled() {
+		if kc.Spec.IsAuthEnabled() && !kc.Spec.Reaper.UseExternalSecrets() {
 			logger.Info("Reconciling Reaper user secrets")
 			var cassandraUserSecretRef corev1.LocalObjectReference
 			var jmxUserSecretRef corev1.LocalObjectReference
@@ -81,6 +89,11 @@ func (r *K8ssandraClusterReconciler) reconcileReaperSecrets(ctx context.Context,
 				return result.Error(err)
 			}
 			logger.Info("Reaper user secrets successfully reconciled")
+		} else if kc.Spec.IsAuthEnabled() && kc.Spec.Reaper.UseExternalSecrets() {
+			// Auth is enabled in the cluster, but the SecretsProvider is set to external, so no secret need to
+			// be reconciled. Secrets will be injected into the Reaper pod by the mutating webhook configured by
+			// the user to retrieve secrets from the external secret store of their choice.
+			logger.Info("Auth is enabled and SecretsProvider is external: skipping Reaper user secret reconciliation")
 		} else {
 			// Auth is disabled in the cluster, so no Reaper secrets need to be reconciled. Note that, if auth was
 			// previously enabled, Reaper secrets may have been created, but they are now useless; we don't delete them
@@ -93,6 +106,9 @@ func (r *K8ssandraClusterReconciler) reconcileReaperSecrets(ctx context.Context,
 }
 
 func (r *K8ssandraClusterReconciler) reconcileReplicatedSecret(ctx context.Context, kc *api.K8ssandraCluster, logger logr.Logger) result.ReconcileResult {
+	if kc.Spec.UseExternalSecrets() {
+		return result.Continue()
+	}
 	if err := secret.ReconcileReplicatedSecret(ctx, r.Client, r.Scheme, kc, logger); err != nil {
 		logger.Error(err, "Failed to reconcile ReplicatedSecret")
 		return result.Error(err)

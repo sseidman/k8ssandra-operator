@@ -18,6 +18,7 @@ package reaper
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	cassdcapi "github.com/k8ssandra/cass-operator/apis/cassandra/v1beta1"
@@ -90,6 +91,7 @@ func (r *ReaperReconciler) reconcile(ctx context.Context, actualReaper *reaperap
 	actualReaper.Status.Progress = reaperapi.ReaperProgressPending
 	actualReaper.Status.SetNotReady()
 
+	// verifies cassandra datacenter resource is in ready state
 	actualDc, result, err := r.reconcileDatacenter(ctx, actualReaper, logger)
 	if !result.IsZero() || err != nil {
 		return result, err
@@ -159,6 +161,7 @@ func (r *ReaperReconciler) reconcileDeployment(
 	logger = logger.WithValues("Deployment", deploymentKey)
 	logger.Info("Reconciling Reaper Deployment")
 
+	// gets empty slice
 	authVars, err := r.collectAuthVars(ctx, actualReaper, logger)
 	if err != nil {
 		logger.Error(err, "Failed to collect Reaper auth variables")
@@ -169,6 +172,7 @@ func (r *ReaperReconciler) reconcileDeployment(
 	var keystorePassword *string
 	var truststorePassword *string
 
+	// TODO: EXTERNAL SECRET FOR ENCRYPTION STORES
 	if actualReaper.Spec.ClientEncryptionStores != nil {
 		if password, err := cassandra.ReadEncryptionStorePassword(ctx, actualReaper.Namespace, r.Client, actualReaper.Spec.ClientEncryptionStores.KeystoreSecretRef.Name, encryption.StoreNameKeystore); err != nil {
 			return ctrl.Result{RequeueAfter: r.DefaultDelay}, err
@@ -295,6 +299,7 @@ func (r *ReaperReconciler) reconcileService(
 	return ctrl.Result{}, nil
 }
 
+// TODO: REAPER UI CREDENTIALS / KUBERNETES JOB? THIS CAN'T BE DONE WITHOUT KNOWING THE CREDENTIALS
 func (r *ReaperReconciler) configureReaper(ctx context.Context, actualReaper *reaperapi.Reaper, actualDc *cassdcapi.CassandraDatacenter, logger logr.Logger) (ctrl.Result, error) {
 	manager := r.NewManager()
 	// Get the Reaper UI secret username and password values if auth is enabled
@@ -309,6 +314,7 @@ func (r *ReaperReconciler) configureReaper(ctx context.Context, actualReaper *re
 			return ctrl.Result{RequeueAfter: r.DefaultDelay}, nil
 		} else if !found {
 			logger.Info("registering cluster with reaper")
+			// TODO: KUBERNETES JOB TO ADD CLUSTER?
 			if err = manager.AddClusterToReaper(ctx, actualDc); err != nil {
 				logger.Error(err, "failed to register cluster with reaper")
 				return ctrl.Result{RequeueAfter: r.DefaultDelay}, err
@@ -318,6 +324,7 @@ func (r *ReaperReconciler) configureReaper(ctx context.Context, actualReaper *re
 	return ctrl.Result{}, nil
 }
 
+// TODO: LOOPED INTO ABOVE FUNCTION
 func (r *ReaperReconciler) getReaperUICredentials(ctx context.Context, actualReaper *reaperapi.Reaper, logger logr.Logger) (string, string, error) {
 	if actualReaper.Spec.UiUserSecretRef.Name == "" {
 		// The UI user secret doesn't exist, meaning auth is disabled
@@ -338,6 +345,7 @@ func (r *ReaperReconciler) getReaperUICredentials(ctx context.Context, actualRea
 	}
 }
 
+// DONE: EXTERNAL, when ExternalSecrets==true these secrets aren't created, should also disable ui auth
 func (r *ReaperReconciler) collectAuthVars(ctx context.Context, actualReaper *reaperapi.Reaper, logger logr.Logger) ([]*corev1.EnvVar, error) {
 	cqlVars, err := r.collectAuthVarsForType(ctx, actualReaper, logger, "cql")
 	if err != nil {
@@ -359,6 +367,7 @@ func (r *ReaperReconciler) collectAuthVars(ctx context.Context, actualReaper *re
 
 	authVars := append(cqlVars, jmxVars...)
 	authVars = append(authVars, uiVars...)
+	fmt.Println(fmt.Sprintf("AUTH VARS HERE: %s | EXTERNAL SECRETS %s", authVars, actualReaper.Spec.SecretsProvider))
 	return authVars, nil
 }
 
@@ -377,7 +386,7 @@ func (r *ReaperReconciler) collectAuthVarsForType(ctx context.Context, actualRea
 		envVars = []*corev1.EnvVar{reaper.EnableAuthVar}
 	}
 
-	if len(secretRef.Name) > 0 {
+	if len(secretRef.Name) > 0 && !actualReaper.Spec.UseExternalSecrets() {
 		secretKey := types.NamespacedName{Namespace: actualReaper.Namespace, Name: secretRef.Name}
 		if secret, err := r.getSecret(ctx, secretKey); err != nil {
 			logger.Error(err, "Failed to get Cassandra authentication secret", authType, secretKey)
