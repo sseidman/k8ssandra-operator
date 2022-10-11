@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 	"testing"
 	"time"
 
@@ -19,11 +18,6 @@ import (
 	promapi "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"k8s.io/utils/pointer"
 
-	"strings"
-
-	"github.com/Jeffail/gabs"
-
-	"github.com/Masterminds/semver/v3"
 	cassdcapi "github.com/k8ssandra/cass-operator/apis/cassandra/v1beta1"
 	api "github.com/k8ssandra/k8ssandra-operator/apis/k8ssandra/v1alpha1"
 	replicationapi "github.com/k8ssandra/k8ssandra-operator/apis/replication/v1alpha1"
@@ -32,6 +26,7 @@ import (
 	"github.com/k8ssandra/k8ssandra-operator/pkg/clientcache"
 	"github.com/k8ssandra/k8ssandra-operator/pkg/config"
 	"github.com/k8ssandra/k8ssandra-operator/pkg/secret"
+	"github.com/k8ssandra/k8ssandra-operator/pkg/unstructured"
 	"github.com/k8ssandra/k8ssandra-operator/test/framework"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,6 +78,7 @@ func TestK8ssandraCluster(t *testing.T) {
 			Scheme:           scheme.Scheme,
 			ClientCache:      clientCache,
 			ManagementApi:    managementApiFactory,
+			Recorder:         mgr.GetEventRecorderFor("k8ssandracluster-controller"),
 		}).SetupWithManager(mgr, clusters)
 		return err
 	})
@@ -112,6 +108,7 @@ func TestK8ssandraCluster(t *testing.T) {
 	t.Run("ConvertSystemReplicationAnnotation", testEnv.ControllerTest(ctx, convertSystemReplicationAnnotation))
 	t.Run("ChangeClusterNameFails", testEnv.ControllerTest(ctx, changeClusterNameFails))
 	t.Run("InjectContainersAndVolumes", testEnv.ControllerTest(ctx, injectContainersAndVolumes))
+	t.Run("CreateMultiDcDseCluster", testEnv.ControllerTest(ctx, createMultiDcDseCluster))
 }
 
 // createSingleDcCluster verifies that the CassandraDatacenter is created and that the
@@ -126,6 +123,7 @@ func createSingleDcCluster(t *testing.T, ctx context.Context, f *framework.Frame
 		},
 		Spec: api.K8ssandraClusterSpec{
 			Cassandra: &api.CassandraClusterTemplate{
+				ClusterName: "Not K8s_Compliant",
 				Datacenters: []api.CassandraDatacenterTemplate{
 					{
 						Meta: api.EmbeddedObjectMeta{
@@ -259,20 +257,18 @@ func createSingleDcCluster(t *testing.T, ctx context.Context, f *framework.Frame
 	if err := f.Patch(ctx, kc, kcPatch, kcKey); err != nil {
 		assert.Fail(t, "got error patching for telemetry", "error", err)
 	}
-	if err = f.SetDatacenterStatusReady(ctx, framework.ClusterKey{
-		NamespacedName: types.NamespacedName{
-			Name:      "dc1",
-			Namespace: namespace,
-		},
-		K8sContext: f.DataPlaneContexts[1],
-	}); err != nil {
+
+	dc1Key := framework.NewClusterKey(f.DataPlaneContexts[1], kc.Namespace, "dc1")
+
+	if err = f.SetDatacenterStatusReady(ctx, dc1Key); err != nil {
 		assert.Fail(t, "error setting status ready", err)
 	}
+
 	//	Check for presence of expected ServiceMonitor for Cassandra Datacenter
 	sm := &promapi.ServiceMonitor{}
 	smKey := framework.ClusterKey{
 		NamespacedName: types.NamespacedName{
-			Name:      kc.Name + "-" + kc.Spec.Cassandra.Datacenters[0].Meta.Name + "-" + "cass-servicemonitor",
+			Name:      kc.SanitizedName() + "-" + kc.Spec.Cassandra.Datacenters[0].Meta.Name + "-" + "cass-servicemonitor",
 			Namespace: namespace,
 		},
 		K8sContext: f.DataPlaneContexts[1],
@@ -297,6 +293,13 @@ func createSingleDcCluster(t *testing.T, ctx context.Context, f *framework.Frame
 		}
 		return false
 	}, timeout, interval)
+
+	// Check that the datacenter has the original cluster name, without sanitization.
+	dc1 := cassdcapi.CassandraDatacenter{}
+	err = f.Get(ctx, dcKey, &dc1)
+	require.NoError(err, "failed to get CassandraDatacenter")
+	require.Equal(kc.Spec.Cassandra.ClusterName, dc1.Spec.ClusterName)
+
 	// Test cluster deletion
 	t.Log("deleting K8ssandraCluster")
 	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: namespace, Name: kc.Name}, timeout, interval)
@@ -333,9 +336,9 @@ func applyClusterTemplateConfigs(t *testing.T, ctx context.Context, f *framework
 						},
 					},
 					CassandraConfig: &api.CassandraConfig{
-						CassandraYaml: api.CassandraYaml{
-							ConcurrentReads:  pointer.Int(8),
-							ConcurrentWrites: pointer.Int(16),
+						CassandraYaml: unstructured.Unstructured{
+							"concurrent_reads":  8,
+							"concurrent_writes": 16,
 						},
 						JvmOptions: api.JvmOptions{
 							MaxHeapSize: parseQuantity("1024Mi"),
@@ -392,13 +395,6 @@ func applyClusterTemplateConfigs(t *testing.T, ctx context.Context, f *framework
 	assert.Equal(dc1Size, dc1.Spec.Size)
 	assert.Equal(dc1.Spec.SuperuserSecretName, superUserSecretName)
 
-	actualConfig, err := gabs.ParseJSON(dc1.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc1 config %s", dc1.Spec.Config))
-
-	expectedConfig, err := parseCassandraConfig(kc.Spec.Cassandra.DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
-
 	t.Log("update dc1 status to ready")
 	err = f.SetDatacenterStatusReady(ctx, dc1Key)
 	require.NoError(err, "failed to set dc1 status ready")
@@ -417,13 +413,6 @@ func applyClusterTemplateConfigs(t *testing.T, ctx context.Context, f *framework
 	assert.Equal(*kc.Spec.Cassandra.DatacenterOptions.StorageConfig, dc2.Spec.StorageConfig)
 	assert.Equal(dc2Size, dc2.Spec.Size)
 	assert.Equal(dc1.Spec.SuperuserSecretName, superUserSecretName)
-
-	actualConfig, err = gabs.ParseJSON(dc2.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc2 config %s", dc2.Spec.Config))
-
-	expectedConfig, err = parseCassandraConfig(kc.Spec.Cassandra.DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
 
 	t.Log("deleting K8ssandraCluster")
 	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name}, timeout, interval)
@@ -478,9 +467,9 @@ func applyDatacenterTemplateConfigs(t *testing.T, ctx context.Context, f *framew
 								},
 							},
 							CassandraConfig: &api.CassandraConfig{
-								CassandraYaml: api.CassandraYaml{
-									ConcurrentReads:  pointer.Int(4),
-									ConcurrentWrites: pointer.Int(4),
+								CassandraYaml: unstructured.Unstructured{
+									"concurrent_reads":  4,
+									"concurrent_writes": 4,
 								},
 								JvmOptions: api.JvmOptions{
 									MaxHeapSize: parseQuantity("1024Mi"),
@@ -511,9 +500,9 @@ func applyDatacenterTemplateConfigs(t *testing.T, ctx context.Context, f *framew
 								},
 							},
 							CassandraConfig: &api.CassandraConfig{
-								CassandraYaml: api.CassandraYaml{
-									ConcurrentReads:  pointer.Int(4),
-									ConcurrentWrites: pointer.Int(12),
+								CassandraYaml: unstructured.Unstructured{
+									"concurrent_reads":  4,
+									"concurrent_writes": 12,
 								},
 								JvmOptions: api.JvmOptions{
 									MaxHeapSize: parseQuantity("1024Mi"),
@@ -552,13 +541,6 @@ func applyDatacenterTemplateConfigs(t *testing.T, ctx context.Context, f *framew
 	assert.Equal(kc.Spec.Cassandra.Datacenters[0].DatacenterOptions.Networking, dc1.Spec.Networking)
 	assert.Equal(dc1Size, dc1.Spec.Size)
 
-	actualConfig, err := gabs.ParseJSON(dc1.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc1 config %s", dc1.Spec.Config))
-
-	expectedConfig, err := parseCassandraConfig(kc.Spec.Cassandra.Datacenters[0].DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
-
 	t.Log("update dc1 status to ready")
 	err = f.SetDatacenterStatusReady(ctx, dc1Key)
 	require.NoError(err, "failed to set dc1 status ready")
@@ -577,13 +559,6 @@ func applyDatacenterTemplateConfigs(t *testing.T, ctx context.Context, f *framew
 	assert.Equal(*kc.Spec.Cassandra.Datacenters[1].DatacenterOptions.StorageConfig, dc2.Spec.StorageConfig)
 	assert.Equal(kc.Spec.Cassandra.Datacenters[1].DatacenterOptions.Networking, dc2.Spec.Networking)
 	assert.Equal(dc2Size, dc2.Spec.Size)
-
-	actualConfig, err = gabs.ParseJSON(dc2.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc2 config %s", dc2.Spec.Config))
-
-	expectedConfig, err = parseCassandraConfig(kc.Spec.Cassandra.Datacenters[1].DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
 
 	t.Log("deleting K8ssandraCluster")
 	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name}, timeout, interval)
@@ -627,9 +602,9 @@ func applyClusterTemplateAndDatacenterTemplateConfigs(t *testing.T, ctx context.
 						HostNetwork: true,
 					},
 					CassandraConfig: &api.CassandraConfig{
-						CassandraYaml: api.CassandraYaml{
-							ConcurrentReads:  pointer.Int(4),
-							ConcurrentWrites: pointer.Int(4),
+						CassandraYaml: unstructured.Unstructured{
+							"concurrent_reads":  4,
+							"concurrent_writes": 4,
 						},
 						JvmOptions: api.JvmOptions{
 							MaxHeapSize: parseQuantity("1024Mi"),
@@ -668,9 +643,9 @@ func applyClusterTemplateAndDatacenterTemplateConfigs(t *testing.T, ctx context.
 								HostNetwork: false,
 							},
 							CassandraConfig: &api.CassandraConfig{
-								CassandraYaml: api.CassandraYaml{
-									ConcurrentReads:  pointer.Int(4),
-									ConcurrentWrites: pointer.Int(12),
+								CassandraYaml: unstructured.Unstructured{
+									"concurrent_reads":  4,
+									"concurrent_writes": 12,
 								},
 								JvmOptions: api.JvmOptions{
 									MaxHeapSize: parseQuantity("1024Mi"),
@@ -712,13 +687,6 @@ func applyClusterTemplateAndDatacenterTemplateConfigs(t *testing.T, ctx context.
 	assert.Equal(kc.Spec.Cassandra.DatacenterOptions.Networking, dc1.Spec.Networking)
 	assert.Equal(dc1Size, dc1.Spec.Size)
 
-	actualConfig, err := gabs.ParseJSON(dc1.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc1 config %s", dc1.Spec.Config))
-
-	expectedConfig, err := parseCassandraConfig(kc.Spec.Cassandra.DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
-
 	t.Log("update dc1 status to ready")
 	err = f.SetDatacenterStatusReady(ctx, dc1Key)
 	require.NoError(err, "failed to set dc1 status ready")
@@ -739,43 +707,11 @@ func applyClusterTemplateAndDatacenterTemplateConfigs(t *testing.T, ctx context.
 	assert.Equal(dc2Size, dc2.Spec.Size)
 	assert.Equal(*dc2.Spec.CDC.PulsarServiceUrl, "pulsar://test-url")
 
-	actualConfig, err = gabs.ParseJSON(dc2.Spec.Config)
-	require.NoError(err, fmt.Sprintf("failed to parse dc2 config %s", dc2.Spec.Config))
-
-	expectedConfig, err = parseCassandraConfig(kc.Spec.Cassandra.Datacenters[1].DatacenterOptions.CassandraConfig, serverVersion, 3, "dc1", "dc2")
-	require.NoError(err, "failed to parse CassandraConfig")
-	assert.Equal(expectedConfig, actualConfig)
-
 	t.Log("deleting K8ssandraCluster")
 	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name}, timeout, interval)
 	require.NoError(err, "failed to delete K8ssandraCluster")
 	f.AssertObjectDoesNotExist(ctx, t, dc1Key, &cassdcapi.CassandraDatacenter{}, timeout, interval)
 	f.AssertObjectDoesNotExist(ctx, t, dc2Key, &cassdcapi.CassandraDatacenter{}, timeout, interval)
-}
-
-func parseCassandraConfig(config *api.CassandraConfig, serverVersion string, systemRF int, dcNames ...string) (*gabs.Container, error) {
-	sort.Strings(dcNames)
-	config = config.DeepCopy()
-	replicationFactors := make([]string, 0)
-	for _, dc := range dcNames {
-		replicationFactors = append(replicationFactors, fmt.Sprintf("%s:%d", dc, systemRF))
-	}
-	rfOpt := cassandra.SystemReplicationFactorStrategy + "=" + strings.Join(replicationFactors, ",")
-	*config = cassandra.ApplyAuthSettings(*config, true)
-	config.JvmOptions.AdditionalOptions = append(
-		[]string{rfOpt, "-Dcom.sun.management.jmxremote.authenticate=true"},
-		config.JvmOptions.AdditionalOptions...,
-	)
-	template := cassandra.DatacenterConfig{
-		ServerVersion:   semver.MustParse(serverVersion),
-		CassandraConfig: *config,
-	}
-	json, err := cassandra.CreateJsonConfig(&template)
-	if err != nil {
-		return nil, err
-	}
-
-	return gabs.ParseJSON(json)
 }
 
 // createMultiDcCluster verifies that the CassandraDatacenters are created in the expected
@@ -1292,8 +1228,8 @@ func changeNumTokensValue(t *testing.T, ctx context.Context, f *framework.Framew
 			Cassandra: &api.CassandraClusterTemplate{
 				DatacenterOptions: api.DatacenterOptions{
 					CassandraConfig: &api.CassandraConfig{
-						CassandraYaml: api.CassandraYaml{
-							NumTokens: pointer.Int(16),
+						CassandraYaml: unstructured.Unstructured{
+							"num_tokens": 16,
 						},
 					},
 				},
@@ -1363,10 +1299,10 @@ func changeNumTokensValue(t *testing.T, ctx context.Context, f *framework.Framew
 	require.NoError(err, "failed to patch datacenter status")
 
 	// Update the datacenter with a different num_tokens value and check that it failed
-	initialNumTokens := kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml.NumTokens
+	initialNumTokens := kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml["num_tokens"]
 	kcKey := framework.ClusterKey{NamespacedName: utils.GetKey(kc), K8sContext: f.ControlPlaneContext}
 	kcPatch := client.MergeFrom(kc.DeepCopy())
-	kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml.NumTokens = pointer.Int(256)
+	kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml["num_tokens"] = 256
 	err = f.Patch(ctx, kc, kcPatch, kcKey)
 	require.NoError(err, "got error patching num_tokens")
 
@@ -1379,9 +1315,9 @@ func changeNumTokensValue(t *testing.T, ctx context.Context, f *framework.Framew
 	require.NoError(err, "failed to unmarshall CassandraDatacenter config")
 	dcConfigYaml, _ := dcConfig["cassandra-yaml"].(map[string]interface{})
 	t.Logf("Initial num_tokens value: %d", initialNumTokens)
-	t.Logf("Spec num_tokens value: %d", kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml.NumTokens)
+	t.Logf("Spec num_tokens value: %d", kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml["num_tokens"])
 	t.Logf("dcConfigYaml num tokens: %v", dcConfigYaml["num_tokens"].(float64))
-	require.NotEqual(fmt.Sprintf("%v", dcConfigYaml["num_tokens"]), fmt.Sprintf("%d", kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml.NumTokens), "num_tokens should not be updated")
+	require.NotEqual(fmt.Sprintf("%v", dcConfigYaml["num_tokens"]), fmt.Sprintf("%d", kc.Spec.Cassandra.DatacenterOptions.CassandraConfig.CassandraYaml["num_tokens"]), "num_tokens should not be updated")
 	require.Equal(fmt.Sprintf("%v", dcConfigYaml["num_tokens"]), fmt.Sprintf("%d", initialNumTokens), "num_tokens should not be updated")
 
 	// Test cluster deletion
@@ -1492,12 +1428,12 @@ func applyClusterWithEncryptionOptions(t *testing.T, ctx context.Context, f *fra
 						Size:       dc1Size,
 						DatacenterOptions: api.DatacenterOptions{
 							CassandraConfig: &api.CassandraConfig{
-								CassandraYaml: api.CassandraYaml{
-									ClientEncryptionOptions: &encryption.ClientEncryptionOptions{
-										Enabled: true,
+								CassandraYaml: unstructured.Unstructured{
+									"client_encryption_options": map[string]interface{}{
+										"enabled": true,
 									},
-									ServerEncryptionOptions: &encryption.ServerEncryptionOptions{
-										InternodeEncryption: "all",
+									"server_encryption_options": map[string]interface{}{
+										"internode_encryption": "all",
 									},
 								},
 							},
@@ -1727,12 +1663,12 @@ func applyClusterWithEncryptionOptionsFail(t *testing.T, ctx context.Context, f 
 						},
 					},
 					CassandraConfig: &api.CassandraConfig{
-						CassandraYaml: api.CassandraYaml{
-							ClientEncryptionOptions: &encryption.ClientEncryptionOptions{
-								Enabled: true,
+						CassandraYaml: unstructured.Unstructured{
+							"client_encryption_options": map[string]interface{}{
+								"enabled": true,
 							},
-							ServerEncryptionOptions: &encryption.ServerEncryptionOptions{
-								InternodeEncryption: "all",
+							"server_encryption_options": map[string]interface{}{
+								"internode_encryption": "all",
 							},
 						},
 					},
@@ -1794,7 +1730,7 @@ func verifySuperuserSecretCreated(ctx context.Context, t *testing.T, f *framewor
 func superuserSecretExists(f *framework.Framework, ctx context.Context, kluster *api.K8ssandraCluster) func() bool {
 	secretName := kluster.Spec.Cassandra.SuperuserSecretRef.Name
 	if secretName == "" {
-		secretName = secret.DefaultSuperuserSecretName(kluster.Name)
+		secretName = secret.DefaultSuperuserSecretName(kluster.SanitizedName())
 	}
 	return secretExists(f, ctx, kluster.Namespace, secretName)
 }
@@ -2215,4 +2151,99 @@ func injectContainersAndVolumes(t *testing.T, ctx context.Context, f *framework.
 	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name}, timeout, interval)
 	require.NoError(err, "failed to delete K8ssandraCluster")
 	f.AssertObjectDoesNotExist(ctx, t, dc1Key, &cassdcapi.CassandraDatacenter{}, timeout, interval)
+}
+
+// createMultiDcDseCluster verifies that the CassandraDatacenters are created in the expected
+// order, based on the workload of each DC.
+func createMultiDcDseCluster(t *testing.T, ctx context.Context, f *framework.Framework, namespace string) {
+	require := require.New(t)
+
+	clusterName := "cluster-multi"
+	kc := &api.K8ssandraCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      clusterName,
+		},
+		Spec: api.K8ssandraClusterSpec{
+			Cassandra: &api.CassandraClusterTemplate{
+				ServerType: "dse",
+				Datacenters: []api.CassandraDatacenterTemplate{
+					{
+						Meta: api.EmbeddedObjectMeta{
+							Name: "dc1",
+						},
+						K8sContext: f.DataPlaneContexts[0],
+						Size:       3,
+						DatacenterOptions: api.DatacenterOptions{
+							ServerVersion: "6.8.17",
+							StorageConfig: &cassdcapi.StorageConfig{
+								CassandraDataVolumeClaimSpec: &corev1.PersistentVolumeClaimSpec{
+									StorageClassName: &defaultStorageClass,
+								},
+							},
+							DseWorkloads: &cassdcapi.DseWorkloads{
+								SearchEnabled: true,
+							},
+						},
+					},
+					{
+						Meta: api.EmbeddedObjectMeta{
+							Name: "dc2",
+						},
+						K8sContext: f.DataPlaneContexts[1],
+						Size:       3,
+						DatacenterOptions: api.DatacenterOptions{
+							ServerVersion: "6.8.17",
+							StorageConfig: &cassdcapi.StorageConfig{
+								CassandraDataVolumeClaimSpec: &corev1.PersistentVolumeClaimSpec{
+									StorageClassName: &defaultStorageClass,
+								},
+							},
+							DseWorkloads: &cassdcapi.DseWorkloads{
+								AnalyticsEnabled: true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := f.Client.Create(ctx, kc)
+	require.NoError(err, "failed to create K8ssandraCluster")
+
+	verifyFinalizerAdded(ctx, t, f, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name})
+
+	verifySuperuserSecretCreated(ctx, t, f, kc)
+
+	verifyReplicatedSecretReconciled(ctx, t, f, kc)
+
+	verifySystemReplicationAnnotationSet(ctx, t, f, kc)
+
+	t.Log("check that dc2 was created")
+	dc2Key := framework.ClusterKey{NamespacedName: types.NamespacedName{Namespace: namespace, Name: "dc2"}, K8sContext: f.DataPlaneContexts[1]}
+	require.Eventually(f.DatacenterExists(ctx, dc2Key), timeout, interval)
+
+	t.Log("check that dc1 has not been created yet")
+	dc1Key := framework.ClusterKey{NamespacedName: types.NamespacedName{Namespace: namespace, Name: "dc1"}, K8sContext: f.DataPlaneContexts[0]}
+	dc1 := &cassdcapi.CassandraDatacenter{}
+	err = f.Get(ctx, dc1Key, dc1)
+	require.True(err != nil && errors.IsNotFound(err), "dc1 should not be created until dc2 is ready")
+
+	t.Log("update dc2 status to ready")
+	err = f.SetDatacenterStatusReady(ctx, dc2Key)
+	require.NoError(err, "failed to set dc2 status ready")
+
+	t.Log("check that dc1 was created")
+	require.Eventually(f.DatacenterExists(ctx, dc1Key), timeout, interval)
+
+	t.Log("update dc1 status to ready")
+	err = f.SetDatacenterStatusReady(ctx, dc1Key)
+	require.NoError(err, "failed to set dc1 status ready")
+
+	t.Log("deleting K8ssandraCluster")
+	err = f.DeleteK8ssandraCluster(ctx, client.ObjectKey{Namespace: kc.Namespace, Name: kc.Name}, timeout, interval)
+	require.NoError(err, "failed to delete K8ssandraCluster")
+	f.AssertObjectDoesNotExist(ctx, t, dc1Key, &cassdcapi.CassandraDatacenter{}, timeout, interval)
+	f.AssertObjectDoesNotExist(ctx, t, dc2Key, &cassdcapi.CassandraDatacenter{}, timeout, interval)
 }

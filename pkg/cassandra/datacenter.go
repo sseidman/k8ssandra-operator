@@ -90,7 +90,7 @@ type DatacenterConfig struct {
 	SuperuserSecretRef       corev1.LocalObjectReference
 	ServerImage              string
 	ServerVersion            *semver.Version
-	ServerType               string
+	ServerType               api.ServerDistribution
 	JmxInitContainerImage    *images.Image
 	Size                     int32
 	Stopped                  bool
@@ -136,7 +136,7 @@ func NewDatacenter(klusterKey types.NamespacedName, template *DatacenterConfig) 
 		return nil, DCConfigIncomplete{"template.ServerType"}
 	}
 
-	if err := validateCassandraYaml(&template.CassandraConfig.CassandraYaml); err != nil {
+	if err := validateCassandraYaml(template.CassandraConfig.CassandraYaml); err != nil {
 		return nil, err
 	}
 
@@ -145,7 +145,11 @@ func NewDatacenter(klusterKey types.NamespacedName, template *DatacenterConfig) 
 		return nil, err
 	}
 
-	rawConfig, err := CreateJsonConfig(template)
+	handleDeprecatedJvmOptions(&template.CassandraConfig.JvmOptions)
+	addNumTokens(template)
+	addStartRpc(template)
+
+	rawConfig, err := createJsonConfig(template.CassandraConfig, template.ServerVersion, template.ServerType)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +177,7 @@ func NewDatacenter(klusterKey types.NamespacedName, template *DatacenterConfig) 
 			Stopped:             template.Stopped,
 			ServerVersion:       template.ServerVersion.String(),
 			ServerImage:         template.ServerImage,
-			ServerType:          template.ServerType,
+			ServerType:          string(template.ServerType),
 			Config:              rawConfig,
 			Racks:               template.Racks,
 			StorageConfig:       *template.StorageConfig,
