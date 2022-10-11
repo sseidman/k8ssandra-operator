@@ -85,6 +85,9 @@ jobs:
           - UpgradeOperatorImage
           - StargateJwt
           - CreateSingleDseDatacenterCluster
+          - CreateSingleDseSearchDatacenterCluster
+          - CreateSingleDseGraphDatacenterCluster
+          - ChangeDseWorkload
       fail-fast: false
     name: ${{ matrix.e2e_test }}
     env:
@@ -109,10 +112,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/checkout@v2
         if: github.event_name != 'pull_request'
-      - name: Set up Go 1.17
+      - name: Set up Go 1.18
         uses: actions/setup-go@v1
         with:
-          go-version: 1.17
+          go-version: 1.18
       - uses: actions/cache@v2
         with:
           path: ~/go/pkg/mod
@@ -138,7 +141,7 @@ jobs:
         run: |
           docker load --input /tmp/k8ssandra-operator.tar
       - name: Setup kind cluster
-        run: make IMG="k8ssandra/k8ssandra-operator:${{ needs.build_image.outputs.image_tag }}" create-kind-cluster kind-load-image cert-manager traefik-kind
+        run: make IMG="k8ssandra/k8ssandra-operator:${{ needs.build_image.outputs.image_tag }}" create-kind-cluster kind-load-image cert-manager nginx-kind
       - name: Run e2e test ( ${{ matrix.e2e_test }} )
         run: |
           e2e_test="TestOperator/${{ matrix.e2e_test }}"

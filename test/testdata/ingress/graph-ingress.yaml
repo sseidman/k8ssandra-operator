@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cluster1-dc1-graph-service-http-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: graph.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cluster1-dc1-service
+                port:
+                  number: 8182

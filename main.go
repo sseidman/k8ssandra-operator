@@ -25,6 +25,7 @@ import (
 
 	cassdcapi "github.com/k8ssandra/cass-operator/apis/cassandra/v1beta1"
 	cassctl "github.com/k8ssandra/cass-operator/apis/control/v1alpha1"
+	"go.uber.org/zap/zapcore"
 
 	promapi "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 
@@ -93,6 +94,7 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	opts := zap.Options{
 		Development: true,
+		TimeEncoder: zapcore.ISO8601TimeEncoder,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -168,6 +170,7 @@ func main() {
 			Scheme:           mgr.GetScheme(),
 			ClientCache:      clientCache,
 			ManagementApi:    cassandra.NewManagementApiFactory(),
+			Recorder:         mgr.GetEventRecorderFor("k8ssandracluster-controller"),
 		}).SetupWithManager(mgr, additionalClusters); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "K8ssandraCluster")
 			os.Exit(1)

@@ -97,6 +97,9 @@ type K8ssandraClusterStatus struct {
 	//
 	// TODO Figure out how to inline this field
 	Datacenters map[string]K8ssandraStatus `json:"datacenters,omitempty"`
+
+	// +kubebuilder:default=None
+	Error string `json:"error,omitempty"`
 }
 
 type K8ssandraClusterConditionType string
@@ -135,6 +138,7 @@ type K8ssandraStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=k8ssandraclusters,shortName=k8c;k8cs
+// +kubebuilder:printcolumn:name="Error",type=string,JSONPath=".status.error",description="Latest reconcile error"
 
 // K8ssandraCluster is the Schema for the k8ssandraclusters API. The K8ssandraCluster CRD name is also the name of the
 // Cassandra cluster (which corresponds to cluster_name in cassandra.yaml).
@@ -191,11 +195,16 @@ func (in *K8ssandraCluster) GetInitializedDatacenters() []CassandraDatacenterTem
 	return datacenters
 }
 
-// SanitizedName returns a sanitized version of the Cassandra cluster name override if it exists,
-// otherwise the k8c object name.
+// SanitizedName returns a sanitized version of the name returned by CassClusterName()
 func (in *K8ssandraCluster) SanitizedName() string {
+	return cassdcapi.CleanupForKubernetes(in.CassClusterName())
+}
+
+// CassClusterName returns the Cassandra cluster name override if it exists,
+// otherwise the k8c object name.
+func (in *K8ssandraCluster) CassClusterName() string {
 	if in.Spec.Cassandra != nil && in.Spec.Cassandra.ClusterName != "" {
-		return cassdcapi.CleanupForKubernetes(in.Spec.Cassandra.ClusterName)
+		return in.Spec.Cassandra.ClusterName
 	}
 	return in.Name
 }
@@ -247,10 +256,8 @@ type CassandraClusterTemplate struct {
 	// Server type: "cassandra" or "dse".
 	// +kubebuilder:validation:Enum=cassandra;dse
 	// +kubebuilder:default=cassandra
-	ServerType string `json:"serverType,omitempty"`
+	ServerType ServerDistribution `json:"serverType,omitempty"`
 }
-
-// +kubebuilder:pruning:PreserveUnknownFields
 
 type CassandraDatacenterTemplate struct {
 	Meta EmbeddedObjectMeta `json:"metadata,omitempty"`
@@ -292,8 +299,8 @@ type DatacenterOptions struct {
 	// +optional
 	ServerImage string `json:"serverImage,omitempty"`
 
-	// CassandraConfig is configuration settings that are applied to cassandra.yaml and
-	// the various jvm*.options files.
+	// CassandraConfig contains configuration settings that are applied to cassandra.yaml, dse.yaml
+	// and the various jvm*.options files.
 	// +optional
 	CassandraConfig *CassandraConfig `json:"config,omitempty"`
 
@@ -428,3 +435,10 @@ func (s *K8ssandraClusterStatus) SetCondition(condition K8ssandraClusterConditio
 func init() {
 	SchemeBuilder.Register(&K8ssandraCluster{}, &K8ssandraClusterList{})
 }
+
+type ServerDistribution string
+
+const (
+	ServerDistributionCassandra = ServerDistribution("cassandra")
+	ServerDistributionDse       = ServerDistribution("dse")
+)

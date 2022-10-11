@@ -18,7 +18,7 @@ fi
 OPTS=$(getopt -o ho --long clusters:,cluster-prefix:,kind-node-version:,kind-worker-nodes:,output-file:,overwrite,help -n 'setup-kind-multicluster' -- "$@")
 eval set -- "$OPTS"
 
-default_kind_node_version=v1.22.7
+default_kind_node_version=v1.24.2
 
 function help() {
 cat << EOF
@@ -90,11 +90,11 @@ nodes:
   - containerPort: 30080
     hostPort: 3${cluster_id}080
     protocol: TCP
+  - containerPort: 30443
+    hostPort: 3${cluster_id}443
+    protocol: TCP
   - containerPort: 30942
     hostPort: 3${cluster_id}942
-    protocol: TCP
-  - containerPort: 30090
-    hostPort: 3${cluster_id}090
     protocol: TCP
 $(for ((i=0; i<num_workers; i++)); do
 cat << EOF2

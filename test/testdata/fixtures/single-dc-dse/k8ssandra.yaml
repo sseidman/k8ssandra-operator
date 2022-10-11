@@ -4,7 +4,7 @@ metadata:
   name: test
 spec:
   cassandra:
-    serverVersion: 6.8.19
+    serverVersion: 6.8.26
     serverType: dse
     dseWorkloads:
       graphEnabled: false
@@ -14,6 +14,8 @@ spec:
           name: dc1
         k8sContext: kind-k8ssandra-0
         size: 1
+        networking:
+          hostNetwork: true
         storageConfig:
           cassandraDataVolumeClaimSpec:
             storageClassName: standard
@@ -24,9 +26,16 @@ spec:
                 storage: 5Gi
         config:
           cassandraYaml:
-            allocate_tokens_for_local_replication_factor: 3
+            authenticator: com.datastax.bdp.cassandra.auth.DseAuthenticator
+            authorizer: com.datastax.bdp.cassandra.auth.DseAuthorizer
+            role_manager: com.datastax.bdp.cassandra.auth.DseRoleManager
+          dseYaml:
+            authentication_options:
+              enabled: true
+            authorization_options:
+              enabled: true
+            server_id: server-id
           jvmOptions:
             heap_initial_size: 512Mi
             heap_max_size: 512Mi
-          dseYaml: {}
     mgmtAPIHeap: 64Mi
